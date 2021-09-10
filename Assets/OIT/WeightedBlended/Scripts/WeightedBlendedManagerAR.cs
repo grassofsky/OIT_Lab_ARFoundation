@@ -3,7 +3,7 @@ using System.Collections;
 
 [ExecuteInEditMode]
 [RequireComponent(typeof(Camera))]
-public class WeightedBlendedManager : MonoBehaviour {
+public class WeightedBlendedManagerAR : MonoBehaviour {
 
     public enum TransparentMode { ODT = 0, Blended, BlendedAndWeighted }
     public enum WeightFunction { Weight0 = 0,  Weight1, Weight2 }
@@ -12,7 +12,7 @@ public class WeightedBlendedManager : MonoBehaviour {
     public Shader accumulateShader = null;
     public Shader revealageShader = null;
     public Shader blendShader = null;
-    public TransparentMode transparentMode = TransparentMode.ODT;
+    public TransparentMode transparentMode = TransparentMode.Blended;
     public WeightFunction weightFunction = WeightFunction.Weight0;
     #endregion
 
@@ -52,11 +52,13 @@ public class WeightedBlendedManager : MonoBehaviour {
     void OnPreRender() {
         if (transparentMode == TransparentMode.ODT) {
             // Just render everything as normal
-            m_camera.cullingMask = -1;
+            // UI should be not render
+            m_camera.cullingMask = ~(1 << LayerMask.NameToLayer("UI"));
         } else {
-            // The main camera shouldn't render anything
-            // Everything is rendered in procedural
-            m_camera.cullingMask = 0;
+            // For AR camera, the main camera should render
+            // non transparent objects and non UI
+            m_camera.cullingMask = ~((1 << LayerMask.NameToLayer("Transparent")) | (1 << LayerMask.NameToLayer("UI")));
+            m_transparentCamera.projectionMatrix = m_camera.projectionMatrix;
         }
     }
 
@@ -90,25 +92,18 @@ public class WeightedBlendedManager : MonoBehaviour {
                 break;
             }
 
-            m_opaqueTex = RenderTexture.GetTemporary(Screen.width, Screen.height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear);
             m_accumTex = RenderTexture.GetTemporary(Screen.width, Screen.height, 0, RenderTextureFormat.ARGBHalf, RenderTextureReadWrite.Linear);
             m_revealageTex = RenderTexture.GetTemporary(Screen.width, Screen.height, 0, RenderTextureFormat.RHalf, RenderTextureReadWrite.Linear);
 
-            // First render all opaque objects
-            m_transparentCamera.SetTargetBuffers(m_opaqueTex.colorBuffer, m_opaqueTex.depthBuffer);
-            m_transparentCamera.backgroundColor = m_camera.backgroundColor;
-            m_transparentCamera.clearFlags = m_camera.clearFlags;
-            m_transparentCamera.cullingMask = ~(1 << LayerMask.NameToLayer("Transparent"));
-            m_transparentCamera.Render();
-
-            // Clear accumTexture to float4(0)
+            // now "src" is the opaque rendering result
+            //Clear accumTexture to float4(0)
             m_transparentCamera.targetTexture = m_accumTex;
             m_transparentCamera.backgroundColor = new Color(0.0f, 0.0f, 0.0f, 0.0f);
             m_transparentCamera.clearFlags = CameraClearFlags.SolidColor;
             m_transparentCamera.cullingMask = 0;
             m_transparentCamera.Render();
             // Render accumTexture
-            m_transparentCamera.SetTargetBuffers(m_accumTex.colorBuffer, m_opaqueTex.depthBuffer);
+            m_transparentCamera.SetTargetBuffers(m_accumTex.colorBuffer, src.depthBuffer);
             m_transparentCamera.clearFlags = CameraClearFlags.Nothing;
             m_transparentCamera.cullingMask = 1 << LayerMask.NameToLayer("Transparent");
             m_transparentCamera.RenderWithShader(accumulateShader, null);
@@ -120,7 +115,7 @@ public class WeightedBlendedManager : MonoBehaviour {
             m_transparentCamera.cullingMask = 0;
             m_transparentCamera.Render();
             // Render revealageTex
-            m_transparentCamera.SetTargetBuffers(m_revealageTex.colorBuffer, m_opaqueTex.depthBuffer);
+            m_transparentCamera.SetTargetBuffers(m_revealageTex.colorBuffer, src.depthBuffer);
             m_transparentCamera.clearFlags = CameraClearFlags.Nothing;
             m_transparentCamera.cullingMask = 1 << LayerMask.NameToLayer("Transparent");
             m_transparentCamera.RenderWithShader(revealageShader, null);
@@ -128,9 +123,8 @@ public class WeightedBlendedManager : MonoBehaviour {
             m_blendMat.SetTexture("_AccumTex", m_accumTex);
             m_blendMat.SetTexture("_RevealageTex", m_revealageTex);
 
-            Graphics.Blit(m_opaqueTex, dst, m_blendMat);
+            Graphics.Blit(src, dst, m_blendMat);
 
-            RenderTexture.ReleaseTemporary(m_opaqueTex);
             RenderTexture.ReleaseTemporary(m_accumTex);
             RenderTexture.ReleaseTemporary(m_revealageTex);
         }
